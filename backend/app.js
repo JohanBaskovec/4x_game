@@ -9,7 +9,13 @@ const WebSocket = require('ws');
 const http = require('http');
 const uuid = require('uuid');
 const cors = require('cors');
-const unitTypes = require('../common/unitTypes.js');
+const {
+  newCity,
+  newUnit,
+  moveUnitToTile,
+  addUnitToPlayer,
+  unitTypes,
+} = require('4xgame_common');
 
 const indexRouter = require('./routes/index');
 const usersRouter = require('./routes/users');
@@ -160,33 +166,6 @@ const games = [];
 const connectedUsers = {};
 const sockets = {};
 
-function newCity() {
-  return {
-    id: uuid.v4(),
-  };
-}
-
-
-function newUnit(world, type) {
-  const unit = {
-    id: uuid.v4(),
-    type,
-    hitPoints: unitTypes[type].baseHitPoints,
-  };
-  world.units[unit.id] = unit;
-  return unit;
-}
-
-function moveUnitToTile(unit, tile) {
-  tile.unitId = unit.id;
-  unit.position = tile.position;
-}
-
-function addUnitToPlayer(unit, player) {
-  player.units.push(unit);
-  unit.owner = player.id;
-}
-
 wss.on('connection', function (ws, request) {
   const send = (o) => {
     ws.send(JSON.stringify(o));
@@ -217,7 +196,7 @@ wss.on('connection', function (ws, request) {
           };
           const startingTile = getRandomTile(game.world);
           const startingSettler = newUnit(game.world, 'settler');
-          moveUnitToTile(startingSettler, startingTile);
+          moveUnitToTile(game.world, startingSettler, startingTile);
           addUnitToPlayer(startingSettler, player);
 
           games.push(game);

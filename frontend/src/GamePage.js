@@ -3,6 +3,15 @@ import React from "react";
 const {useEffect} = require("react");
 
 const {useRef} = require("react");
+const {
+  newCity,
+  newUnit,
+  moveUnitToTile,
+  addUnitToPlayer,
+  unitTypes,
+  getUnitById,
+  getTile,
+} = require('4xgame_common');
 
 class Game {
   constructor(canvas) {
@@ -11,37 +20,60 @@ class Game {
     this.canvas = canvas;
     this.context = context;
     this.current = null;
-    this.orderQueue = [];
-    this.selectedUnit = null;
+    this.commandQueue = [];
+    this.selectedUnitId = null;
 
     this.canvasPosition = {
       x: canvas.offsetLeft,
       y: canvas.offsetTop,
     };
 
-    canvas.addEventListener('click', (e) => {
-
-      // use pageX and pageY to get the mouse position
-      // relative to the browser window
-
-      const mouse = {
-        x: e.pageX - this.canvasPosition.x,
-        y: e.pageY - this.canvasPosition.y
-      }
-
-      // now you have local coordinates,
-      // which consider a (0,0) origin at the
-      // top-left of canvas element
-      console.log(mouse);
-
+    canvas.addEventListener('contextmenu', e => {
+      e.preventDefault();
       switch (this.state) {
-        case 'menu':
-          this.startNewGame();
-          break;
         case 'inProgress':
+          if (this.selectedUnitId != null) {
+            const unit = getUnitById(this.current.world, this.selectedUnitId);
+            const mouse = this.getCanvasClickPosition(e);
+            const tile = getTile(this.current.world, mouse.tile);
+            if (tile.reachable) {
+              moveUnitToTile(this.current.world, unit, tile);
+              this.computeReachableTiles();
+            }
+
+          }
           break;
+
       }
     });
+
+    canvas.addEventListener('click', (e) => {
+        const mouse = this.getCanvasClickPosition(e);
+
+        // now you have local coordinates,
+        // which consider a (0,0) origin at the
+        // top-left of canvas element
+        console.log(mouse);
+        console.log(e);
+
+        switch (this.state) {
+          case 'menu':
+            this.startNewGame();
+            break;
+          case 'inProgress':
+            const tile = getTile(this.current.world, mouse.tile);
+            const previouslySelectedUnitId = this.selectedUnitId;
+            if (tile.unitId) {
+              const unit = getUnitById(this.current.world, tile.unitId);
+              unit.selected = true;
+              this.selectedUnitId = unit.id;
+            }
+
+            this.computeReachableTiles();
+            break;
+        }
+      }
+    );
 
     this.socket = new WebSocket("ws://localhost:3001");
 
@@ -61,6 +93,12 @@ class Game {
           case 'newGameResponse':
             this.current = messageObject.game;
             this.state = 'inProgress';
+
+            const tileMap = this.current.world.tileMap;
+            this.mapWidthInTiles = tileMap.length;
+            this.mapHeightInTiles = tileMap[0].length;
+            this.tileWidth = this.canvas.width / this.mapWidthInTiles;
+            this.tileHeight = this.canvas.height / this.mapHeightInTiles;
             break;
           case 'moveResponse':
             break;
@@ -69,6 +107,71 @@ class Game {
         console.error(e);
       }
     });
+  }
+
+  computeReachableTiles() {
+    for (let x = 0; x < this.mapWidthInTiles; x++) {
+      for (let y = 0; y < this.mapHeightInTiles; y++) {
+        const tile = getTile(this.current.world, {x, y});
+        tile.reachable = false;
+        delete tile.walkingDistance;
+      }
+    }
+    if (this.selectedUnitId != null) {
+      const unit = getUnitById(this.current.world, this.selectedUnitId);
+      const unitPosition = unit.position;
+      const startingTile = getTile(this.current.world, unitPosition);
+      startingTile.walkingDistance = 0;
+      startingTile.reachable = false;
+      const queue = [startingTile];
+      while (queue.length > 0) {
+        const tile = queue.pop();
+        const walkingDistance = tile.walkingDistance + 1;
+        if (walkingDistance > unitTypes[unit.type].move) {
+          continue;
+        }
+        const minX = Math.max(tile.position.x - 1, 0);
+        const minY = Math.max(tile.position.y - 1, 0);
+        const maxX = Math.min(tile.position.x + 1, this.mapWidthInTiles - 1);
+        const maxY = Math.min(tile.position.y + 1, this.mapHeightInTiles - 1);
+        for (let x = minX; x <= maxX; x++) {
+          for (let y = minY; y <= maxY; y++) {
+            if (x === unitPosition.x && y === unitPosition.y) {
+              continue;
+            }
+            const targetTile = getTile(this.current.world, {x, y});
+            if (targetTile.type !== 'mountain') {
+              if (targetTile.reachable === false) {
+                targetTile.reachable = true;
+                targetTile.walkingDistance = walkingDistance;
+                queue.push(targetTile);
+              } else if (walkingDistance < targetTile.walkingDistance) {
+                targetTile.walkingDistance = walkingDistance;
+                queue.push(targetTile);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  getCanvasClickPosition(e) {
+    // use pageX and pageY to get the mouse position
+    // relative to the browser window
+    const x = e.pageX - this.canvasPosition.x;
+    const y = e.pageY - this.canvasPosition.y;
+    const mouse = {
+      pixel: {
+        x,
+        y,
+      },
+      tile: {
+        x: Math.floor(x / this.tileWidth),
+        y: Math.floor(y / this.tileHeight),
+      },
+    }
+    return mouse;
   }
 
   startNewGame() {
@@ -97,15 +200,11 @@ class Game {
       case 'inProgress':
         const world = this.current.world;
         const tileMap = world.tileMap;
-        const mapWidthInTiles = tileMap.length;
-        const mapHeightInTiles = tileMap[0].length;
-        const tileWidth = this.canvas.width / mapWidthInTiles;
-        const tileHeight = this.canvas.height / mapHeightInTiles;
         const unitOffset = 2;
-        const unitWidth = tileWidth - (unitOffset * 2);
-        const unitHeight = tileHeight - (unitOffset * 2);
-        for (let x = 0; x < mapWidthInTiles; x++) {
-          for (let y = 0; y < mapHeightInTiles; y++) {
+        const unitWidth = this.tileWidth - (unitOffset * 2);
+        const unitHeight = this.tileHeight - (unitOffset * 2);
+        for (let x = 0; x < this.mapWidthInTiles; x++) {
+          for (let y = 0; y < this.mapHeightInTiles; y++) {
             const tile = tileMap[x][y];
             let color = {
               'forest': '#2d7f4e',
@@ -122,15 +221,19 @@ class Game {
             }
             this.context.fillStyle = color[tile.type];
 
-            const xPos = x * tileWidth;
-            const yPos = y * tileHeight;
-            this.context.fillRect(xPos, yPos, tileWidth, tileHeight);
+            const xPos = x * this.tileWidth;
+            const yPos = y * this.tileHeight;
+            this.context.fillRect(xPos, yPos, this.tileWidth, this.tileHeight);
+            if (tile.reachable) {
+              this.context.fillStyle = 'black';
+              this.context.fillRect(xPos, yPos, this.tileWidth, this.tileHeight);
+            }
 
             if (tile.unitId) {
               const unit = world.units[tile.unitId];
               {
-                const unitXPos = tile.position.x * tileWidth + unitOffset;
-                const unitYPos = tile.position.y * tileHeight + unitOffset;
+                const unitXPos = tile.position.x * this.tileWidth + unitOffset;
+                const unitYPos = tile.position.y * this.tileHeight + unitOffset;
 
                 this.context.fillStyle = color[unit.type];
                 this.context.fillRect(unitXPos, unitYPos, unitWidth, unitHeight);
