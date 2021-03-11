@@ -2,7 +2,7 @@ const uuid = require('uuid');
 
 const unitTypes = {
   settler: {
-    move: 2,
+    move: 3,
     defense: 1,
     attack: 0,
     type: 'settler',
@@ -45,8 +45,10 @@ class Game {
 
   static createWithRandomWorld() {
     const tileMap = [];
+    const unitMap = [];
     for (let x = 0; x < 10; x++) {
       tileMap[x] = [];
+      unitMap[x] = [];
       for (let y = 0; y < 10; y++) {
         const tile = {
           type: getRandomTileType(),
@@ -57,6 +59,7 @@ class Game {
           id: uuid.v4(),
         };
         tileMap[x][y] = tile;
+        unitMap[x][y] = null;
       }
     }
 
@@ -65,6 +68,7 @@ class Game {
       users: [],
       tileMap,
       units: {},
+      unitMap,
       cities: {},
       buildings: {},
     });
@@ -92,25 +96,31 @@ class Game {
       id: uuid.v4(),
       type,
       hitPoints: unitTypes[type].baseHitPoints,
+      alive: true,
     };
     this.units[unit.id] = unit;
     return unit;
   }
 
   moveUnitToTile(unit, tile) {
-    if (unit.position != null) {
-      const originalTile = this.getTile(unit.position);
-      originalTile.unitId = null;
+    if (unit.position) {
+      this.unitMap[unit.position.x][unit.position.y] = null;
     }
-    tile.unitId = unit.id;
-    unit.position = tile.position;
+    unit.position.x = tile.position.x;
+    unit.position.y = tile.position.y;
+    this.unitMap[unit.position.x][unit.position.y] = unit.id;
   }
 
   getUnitById(unitId) {
     return this.units[unitId];
   }
 
-  getTile(tileCoord) {
+  getUnitByPosition(unitCoord) {
+    const unitId = this.unitMap[unitCoord.x][unitCoord.y];
+    return this.getUnitById(unitId);
+  }
+
+  getTileByPosition(tileCoord) {
     return this.tileMap[tileCoord.x][tileCoord.y];
   }
 
@@ -129,6 +139,111 @@ class Game {
   getRandomTile() {
     const position = this.getRandomTilePosition();
     return this.tileMap[position.x][position.y];
+  }
+
+  findShortestPath(unit, toTile) {
+    function h(n) {
+      return Math.hypot(toTile.position.x - n.position.x, toTile.position.y - n.position.y);
+    }
+
+    this.forEachTile((tile) => {
+      tile.fScore = undefined;
+      tile.gScore = undefined;
+      tile.from = undefined;
+    });
+    const unitPosition = unit.position;
+    const startingTile = this.getTileByPosition(unitPosition);
+    startingTile.fScore = h(startingTile);
+    startingTile.gScore = 0;
+
+    const queue = [startingTile];
+    while (queue.length > 0) {
+      let currentTile = null;
+      let lowestF = Number.MAX_VALUE;
+      let lowestFIndex = 0;
+      for (let i = 0; i < queue.length ; i++) {
+        const tile = queue[i];
+        let fScore = Number.MAX_VALUE;
+        if (tile.fScore !== undefined) {
+          fScore = tile.fScore;
+        }
+        if (fScore < lowestF) {
+          currentTile = tile;
+          lowestF = fScore;
+          lowestFIndex = i;
+        }
+      }
+      if (currentTile.position.x === toTile.position.x && currentTile.position.y === toTile.position.y) {
+        let step = currentTile;
+        const path = [step];
+        while (step != null) {
+          step = step.from;
+          if (step != null) {
+            path.push(step);
+          }
+        }
+        return path.reverse();
+      }
+      queue.splice(lowestFIndex, 1);
+
+      const minX = Math.max(currentTile.position.x - 1, 0);
+      const minY = Math.max(currentTile.position.y - 1, 0);
+      const maxX = Math.min(currentTile.position.x + 1, this.mapWidthInTiles - 1);
+      const maxY = Math.min(currentTile.position.y + 1, this.mapHeightInTiles - 1);
+      for (let x = minX; x <= maxX; x++) {
+        for (let y = minY; y <= maxY; y++) {
+          const targetTile = this.getTileByPosition({x, y});
+          if (targetTile.type !== 'mountain') {
+            let gScoreTarget = Number.MAX_VALUE;
+            if (targetTile.gScore !== undefined) {
+              gScoreTarget = targetTile.gScore;
+            }
+            // distance between 2 tiles is always 1
+            // TODO: more difficult movement in forest, hills
+            const tentativeGScore = currentTile.gScore + 1;
+            if (tentativeGScore < gScoreTarget) {
+              targetTile.from = currentTile;
+              targetTile.gScore = tentativeGScore;
+              targetTile.fScore = tentativeGScore + h(targetTile);
+              if (queue.find(n => n === targetTile) == null) {
+                queue.push(targetTile);
+              }
+            }
+          }
+        }
+      }
+    }
+    // no path found
+    return null;
+  }
+
+  executeCommand(command) {
+    switch (command.type) {
+      case 'move':
+        const unit = this.getUnitByPosition(command.unitPosition);
+        const tile = this.getTileByPosition(command.tilePosition);
+        if (unit == null || tile == null) {
+          return;
+        }
+        this.moveUnitToTile(unit, tile);
+        break;
+    }
+  }
+
+  createMoveCommand(unit, tile) {
+    return {
+      type: 'move',
+      unitPosition: unit.position,
+      tilePosition: tile.position,
+    };
+  }
+
+  forEachTile(f) {
+    for (let x = 0; x < this.mapWidthInTiles; x++) {
+      for (let y = 0; y < this.mapHeightInTiles; y++) {
+        f(this.getTileByPosition({x, y}));
+      }
+    }
   }
 }
 
