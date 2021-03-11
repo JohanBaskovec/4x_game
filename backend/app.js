@@ -10,10 +10,7 @@ const http = require('http');
 const uuid = require('uuid');
 const cors = require('cors');
 const {
-  newCity,
-  newUnit,
-  moveUnitToTile,
-  addUnitToPlayer,
+  Game,
   unitTypes,
 } = require('4xgame_common');
 
@@ -104,64 +101,6 @@ server.on('upgrade', function (request, socket, head) {
   });
 });
 
-// max excluded
-function getRandomNumber(min, max) {
-  return Math.floor(Math.random() * ((max - 1) - min + 1) + min);
-}
-
-const tileTypes = [
-  'forest',
-  'forestWithBerries',
-  'forestWithGame',
-  'mountain',
-  'mountainWithGold',
-  'mountainWithIron',
-  'mountainWithStones',
-  'hill',
-  'plain',
-];
-
-function getRandomTileType() {
-  return tileTypes[getRandomNumber(0, tileTypes.length)];
-}
-
-function newWorld() {
-  const tileMap = [];
-  for (let x = 0; x < 10; x++) {
-    tileMap[x] = [];
-    for (let y = 0; y < 10; y++) {
-      const tile = {
-        type: getRandomTileType(),
-        position: {x, y},
-        unitId: null,
-        city: null,
-        building: null,
-        id: uuid.v4(),
-      };
-      tileMap[x][y] = tile;
-    }
-  }
-
-  return {
-    tileMap,
-    units: {},
-    cities: {},
-    buildings: {},
-  };
-}
-
-function getRandomTilePosition(world) {
-  return {
-    x: getRandomNumber(0, world.tileMap.length),
-    y: getRandomNumber(0, world.tileMap[0].length)
-  }
-}
-
-function getRandomTile(world) {
-  const position = getRandomTilePosition(world);
-  return world.tileMap[position.x][position.y];
-}
-
 const games = [];
 const connectedUsers = {};
 const sockets = {};
@@ -189,15 +128,12 @@ wss.on('connection', function (ws, request) {
       const messageObject = JSON.parse(message);
       switch (messageObject.type) {
         case 'newGameRequest':
-          const game = {
-            users: [player],
-            id: uuid.v4(),
-            world: newWorld(),
-          };
-          const startingTile = getRandomTile(game.world);
-          const startingSettler = newUnit(game.world, 'settler');
-          moveUnitToTile(game.world, startingSettler, startingTile);
-          addUnitToPlayer(startingSettler, player);
+          const game = Game.createWithRandomWorld();
+          game.users.push(player);
+          const startingTile = game.getRandomTile();
+          const startingSettler = game.newUnit('settler');
+          game.moveUnitToTile(startingSettler, startingTile);
+          game.addUnitToPlayer(startingSettler, player);
 
           games.push(game);
           send({

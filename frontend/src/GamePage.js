@@ -4,16 +4,11 @@ const {useEffect} = require("react");
 
 const {useRef} = require("react");
 const {
-  newCity,
-  newUnit,
-  moveUnitToTile,
-  addUnitToPlayer,
+  Game,
   unitTypes,
-  getUnitById,
-  getTile,
 } = require('4xgame_common');
 
-class Game {
+class CanvasGame {
   constructor(canvas) {
     const context = canvas.getContext('2d')
     this.state = 'loading';
@@ -33,11 +28,11 @@ class Game {
       switch (this.state) {
         case 'inProgress':
           if (this.selectedUnitId != null) {
-            const unit = getUnitById(this.current.world, this.selectedUnitId);
+            const unit = this.current.getUnitById(this.selectedUnitId);
             const mouse = this.getCanvasClickPosition(e);
-            const tile = getTile(this.current.world, mouse.tile);
+            const tile = this.current.getTile(mouse.tile);
             if (tile.reachable) {
-              moveUnitToTile(this.current.world, unit, tile);
+              this.current.moveUnitToTile(unit, tile);
               this.computeReachableTiles();
             }
 
@@ -61,10 +56,9 @@ class Game {
             this.startNewGame();
             break;
           case 'inProgress':
-            const tile = getTile(this.current.world, mouse.tile);
-            const previouslySelectedUnitId = this.selectedUnitId;
+            const tile = this.current.getTile(mouse.tile);
             if (tile.unitId) {
-              const unit = getUnitById(this.current.world, tile.unitId);
+              const unit = this.current.getUnitById(tile.unitId);
               unit.selected = true;
               this.selectedUnitId = unit.id;
             }
@@ -91,14 +85,10 @@ class Game {
         console.log(messageObject);
         switch (messageObject.type) {
           case 'newGameResponse':
-            this.current = messageObject.game;
+            this.current = Game.fromData(messageObject.game);
             this.state = 'inProgress';
-
-            const tileMap = this.current.world.tileMap;
-            this.mapWidthInTiles = tileMap.length;
-            this.mapHeightInTiles = tileMap[0].length;
-            this.tileWidth = this.canvas.width / this.mapWidthInTiles;
-            this.tileHeight = this.canvas.height / this.mapHeightInTiles;
+            this.tileWidth = this.canvas.width / this.current.mapWidthInTiles;
+            this.tileHeight = this.canvas.height / this.current.mapHeightInTiles;
             break;
           case 'moveResponse':
             break;
@@ -110,17 +100,17 @@ class Game {
   }
 
   computeReachableTiles() {
-    for (let x = 0; x < this.mapWidthInTiles; x++) {
-      for (let y = 0; y < this.mapHeightInTiles; y++) {
-        const tile = getTile(this.current.world, {x, y});
+    for (let x = 0; x < this.current.mapWidthInTiles; x++) {
+      for (let y = 0; y < this.current.mapHeightInTiles; y++) {
+        const tile = this.current.getTile({x, y});
         tile.reachable = false;
         delete tile.walkingDistance;
       }
     }
     if (this.selectedUnitId != null) {
-      const unit = getUnitById(this.current.world, this.selectedUnitId);
+      const unit = this.current.getUnitById(this.selectedUnitId);
       const unitPosition = unit.position;
-      const startingTile = getTile(this.current.world, unitPosition);
+      const startingTile = this.current.getTile(unitPosition);
       startingTile.walkingDistance = 0;
       startingTile.reachable = false;
       const queue = [startingTile];
@@ -132,14 +122,14 @@ class Game {
         }
         const minX = Math.max(tile.position.x - 1, 0);
         const minY = Math.max(tile.position.y - 1, 0);
-        const maxX = Math.min(tile.position.x + 1, this.mapWidthInTiles - 1);
-        const maxY = Math.min(tile.position.y + 1, this.mapHeightInTiles - 1);
+        const maxX = Math.min(tile.position.x + 1, this.current.mapWidthInTiles - 1);
+        const maxY = Math.min(tile.position.y + 1, this.current.mapHeightInTiles - 1);
         for (let x = minX; x <= maxX; x++) {
           for (let y = minY; y <= maxY; y++) {
             if (x === unitPosition.x && y === unitPosition.y) {
               continue;
             }
-            const targetTile = getTile(this.current.world, {x, y});
+            const targetTile = this.current.getTile({x, y});
             if (targetTile.type !== 'mountain') {
               if (targetTile.reachable === false) {
                 targetTile.reachable = true;
@@ -198,13 +188,12 @@ class Game {
 
         break;
       case 'inProgress':
-        const world = this.current.world;
-        const tileMap = world.tileMap;
+        const tileMap = this.current.tileMap;
         const unitOffset = 2;
         const unitWidth = this.tileWidth - (unitOffset * 2);
         const unitHeight = this.tileHeight - (unitOffset * 2);
-        for (let x = 0; x < this.mapWidthInTiles; x++) {
-          for (let y = 0; y < this.mapHeightInTiles; y++) {
+        for (let x = 0; x < this.current.mapWidthInTiles; x++) {
+          for (let y = 0; y < this.current.mapHeightInTiles; y++) {
             const tile = tileMap[x][y];
             let color = {
               'forest': '#2d7f4e',
@@ -230,7 +219,7 @@ class Game {
             }
 
             if (tile.unitId) {
-              const unit = world.units[tile.unitId];
+              const unit = this.current.getUnitById(tile.unitId);
               {
                 const unitXPos = tile.position.x * this.tileWidth + unitOffset;
                 const unitYPos = tile.position.y * this.tileHeight + unitOffset;
@@ -258,10 +247,8 @@ export function GamePage(props) {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    console.log(canvas);
-    const game = new Game(canvas);
-    game.run();
-
+    const canvasGame = new CanvasGame(canvas);
+    canvasGame.run();
   }, [])
 
   const canvasRef = useRef(null);

@@ -17,53 +17,122 @@ const unitTypes = {
   },
 }
 
-function newCity() {
-  return {
-    id: uuid.v4(),
-  };
+// max excluded
+function getRandomNumber(min, max) {
+  return Math.floor(Math.random() * ((max - 1) - min + 1) + min);
 }
 
-function newUnit(world, type) {
-  const unit = {
-    id: uuid.v4(),
-    type,
-    hitPoints: unitTypes[type].baseHitPoints,
-  };
-  world.units[unit.id] = unit;
-  return unit;
+function getRandomTileType() {
+  return tileTypes[getRandomNumber(0, tileTypes.length)];
 }
 
-function moveUnitToTile(world, unit, tile) {
-  if (unit.position != null) {
-    const originalTile = getTile(world, unit.position);
-    originalTile.unitId = null;
+
+const tileTypes = [
+  'forest',
+  'forestWithBerries',
+  'forestWithGame',
+  'mountain',
+  'mountainWithGold',
+  'mountainWithIron',
+  'mountainWithStones',
+  'hill',
+  'plain',
+];
+
+class Game {
+  constructor() {
   }
-  tile.unitId = unit.id;
-  unit.position = tile.position;
-}
 
-function getUnitById(world, unitId) {
-  const unit = world.units[unitId];
-  return unit;
-}
+  static createWithRandomWorld() {
+    const tileMap = [];
+    for (let x = 0; x < 10; x++) {
+      tileMap[x] = [];
+      for (let y = 0; y < 10; y++) {
+        const tile = {
+          type: getRandomTileType(),
+          position: {x, y},
+          unitId: null,
+          city: null,
+          building: null,
+          id: uuid.v4(),
+        };
+        tileMap[x][y] = tile;
+      }
+    }
 
-function getTile(world, tileCoord) {
-  const tile = world.tileMap[tileCoord.x][tileCoord.y];
-  return tile;
-}
+    const game = Game.fromData({
+      id: uuid.v4(),
+      users: [],
+      tileMap,
+      units: {},
+      cities: {},
+      buildings: {},
+    });
+    return game;
+  }
 
+  static fromData(data) {
+    const game = new Game();
+    Object.assign(game, data);
 
-function addUnitToPlayer(unit, player) {
-  player.units.push(unit);
-  unit.owner = player.id;
+    const tileMap = game.tileMap;
+    game.mapWidthInTiles = tileMap.length;
+    game.mapHeightInTiles = tileMap[0].length;
+    return game;
+  }
+
+  newCity() {
+    return {
+      id: uuid.v4(),
+    };
+  }
+
+  newUnit(type) {
+    const unit = {
+      id: uuid.v4(),
+      type,
+      hitPoints: unitTypes[type].baseHitPoints,
+    };
+    this.units[unit.id] = unit;
+    return unit;
+  }
+
+  moveUnitToTile(unit, tile) {
+    if (unit.position != null) {
+      const originalTile = this.getTile(unit.position);
+      originalTile.unitId = null;
+    }
+    tile.unitId = unit.id;
+    unit.position = tile.position;
+  }
+
+  getUnitById(unitId) {
+    return this.units[unitId];
+  }
+
+  getTile(tileCoord) {
+    return this.tileMap[tileCoord.x][tileCoord.y];
+  }
+
+  addUnitToPlayer(unit, player) {
+    player.units.push(unit);
+    unit.owner = player.id;
+  }
+
+  getRandomTilePosition() {
+    return {
+      x: getRandomNumber(0, this.tileMap.length),
+      y: getRandomNumber(0, this.tileMap[0].length)
+    }
+  }
+
+  getRandomTile() {
+    const position = this.getRandomTilePosition();
+    return this.tileMap[position.x][position.y];
+  }
 }
 
 module.exports = {
-  newCity,
-  newUnit,
-  moveUnitToTile,
-  addUnitToPlayer,
   unitTypes,
-  getUnitById,
-  getTile,
+  Game,
 };
