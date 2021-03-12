@@ -127,6 +127,18 @@ wss.on('connection', function (ws, request) {
     try {
       const messageObject = JSON.parse(message);
       switch (messageObject.type) {
+        case 'gameListRequest':
+          const gameSummaries = games.map(game => {
+            return {
+              name: game.id,
+              players: game.users.length,
+            };
+          });
+          send({
+            type: 'gameListResponse',
+            gameSummaries,
+          });
+          break;
         case 'newGameRequest':
           const game = Game.createWithRandomWorld();
           game.users.push(player);
@@ -142,18 +154,14 @@ wss.on('connection', function (ws, request) {
           });
 
           break;
-        case 'moveRequest':
-          const movements = messageObject.movements;
-          const builds = messageObject.build;
-          for (const movement of movements) {
-            const targetPosition = movement.targetPosition;
-            const unit = movement.unitPosition;
+        case 'endTurnRequest':
+          // TODO: input validation
+          for (const command of messageObject.commands) {
+            switch (command.type) {
+              case 'move':
+                break;
+            }
           }
-          for (const build of builds) {
-            const targetPosition = build.position;
-            const buildingType = build.buildingType;
-          }
-
           break;
       }
       console.log(`Received message ${message}`);

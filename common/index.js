@@ -71,6 +71,7 @@ class Game {
       unitMap,
       cities: {},
       buildings: {},
+      state: 'waitingForPlayers',
     });
     return game;
   }
@@ -97,6 +98,7 @@ class Game {
       type,
       hitPoints: unitTypes[type].baseHitPoints,
       alive: true,
+      move: unitTypes[type].move,
     };
     this.units[unit.id] = unit;
     return unit;
@@ -105,6 +107,8 @@ class Game {
   moveUnitToTile(unit, tile) {
     if (unit.position) {
       this.unitMap[unit.position.x][unit.position.y] = null;
+    } else {
+      unit.position = {x: 0, y: 0};
     }
     unit.position.x = tile.position.x;
     unit.position.y = tile.position.y;
@@ -178,7 +182,7 @@ class Game {
         const path = [step];
         while (step != null) {
           step = step.from;
-          if (step != null) {
+          if (step != null && step.from != null) {
             path.push(step);
           }
         }
@@ -230,11 +234,11 @@ class Game {
     }
   }
 
-  createMoveCommand(unit, tile) {
+  createMoveCommand(unit, path) {
     return {
       type: 'move',
       unitPosition: unit.position,
-      tilePosition: tile.position,
+      path: path.map(tile => tile.position),
     };
   }
 

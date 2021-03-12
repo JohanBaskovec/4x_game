@@ -18,13 +18,67 @@ class CanvasGame {
     this.canvas = canvas;
     this.context = context;
     this.current = null;
+    this.commandsForServer = [];
     this.commandQueue = [];
     this.selectedUnitId = null;
+    this.gameSummaries = [];
+    this.leafNodes = [];
 
     this.canvasPosition = {
       x: canvas.offsetLeft,
       y: canvas.offsetTop,
     };
+    this.menu = {
+      width: '100%',
+      height: '100%',
+      backgroundColor: 'green',
+      onClick: () => {
+        console.log('on click on canvas root node!');
+      },
+      children: [
+        {
+          type: 'text',
+          text: '4x Game',
+          font: '48px serif',
+          fillStyle: 'black',
+          marginTop: 50,
+          onClick: () => {
+            console.log('on click on title!');
+          },
+        },
+        {
+          type: 'button',
+          backgroundColor: 'red',
+          width: '80%',
+          height: 80,
+          marginTop: 10,
+          centerHorizontally: true,
+          centerVertically: true,
+          children: [
+            {
+              type: 'text',
+              font: '48px serif',
+              fillStyle: 'black',
+              text: 'New game',
+              onClick: () => {
+                console.log('on click on new game text!');
+              },
+            }
+          ],
+          onClick: () => {
+            this.startNewGame();
+          },
+        }
+      ]
+    };
+    this.initNode({
+      width: this.canvas.width,
+      height: this.canvas.height,
+      computedWidth: this.canvas.width,
+      computedHeight: this.canvas.height,
+      y: 0,
+      x: 0,
+    }, this.menu, 0);
 
     canvas.addEventListener('contextmenu', e => {
       e.preventDefault();
@@ -36,7 +90,9 @@ class CanvasGame {
             const tile = this.current.getTileByPosition(mouse.tile);
             if (tile.reachable) {
               // TODO: deselect unit if it's been removed
-              const command = this.current.createMoveCommand(unit, tile);
+              const path = this.current.findShortestPath(unit, tile);
+              const command = this.current.createMoveCommand(unit, path);
+              this.commandsForServer.push(command);
               this.executeCommand(command);
             }
 
@@ -57,7 +113,41 @@ class CanvasGame {
 
         switch (this.state) {
           case 'menu':
-            this.startNewGame();
+            function executeOnClick(node, path) {
+              let bubble = true;
+              if (node.onClick) {
+                const ret = node.onClick({
+                  type: 'click',
+                  path: path,
+                });
+                if (ret === false) {
+                  bubble = false;
+                }
+              }
+              if (!bubble) {
+                return;
+              }
+              if (node.parent) {
+                executeOnClick(node.parent);
+              }
+            }
+            function findHit(node, path){
+              let childHit = false;
+              if (node.children) {
+                for (const child of node.children) {
+                  if (mouse.pixel.x > child.x && mouse.pixel.x < child.x + child.computedWidth
+                    && mouse.pixel.y > child.y && mouse.pixel.y < child.y + child.computedHeight) {
+                    findHit(child, path.concat(child));
+                    childHit = true;
+                    break;
+                  }
+                }
+              }
+              if (!childHit) {
+                executeOnClick(node, path);
+              }
+            }
+            findHit(this.menu, [this.menu]);
             break;
           case 'inProgress':
             const unit = this.current.getUnitByPosition(mouse.tile);
@@ -77,7 +167,10 @@ class CanvasGame {
     this.socket.addEventListener('open', (event) => {
       this.state = 'menu';
       console.log(this.state);
-      this.startNewGame();
+      this.send({
+        type: 'gameListRequest',
+      });
+      //this.startNewGame();
     });
 
     this.socket.addEventListener('message', (event) => {
@@ -87,6 +180,37 @@ class CanvasGame {
         console.log('New message:');
         console.log(messageObject);
         switch (messageObject.type) {
+          case 'gameListResponse':
+            this.gameSummaries = messageObject.gameSummaries;
+            for (const gameSummary of this.gameSummaries) {
+              this.addNode(
+                this.menu,
+                {
+                  type: 'button',
+                  backgroundColor: 'orange',
+                  width: '80%',
+                  height: 80,
+                  marginTop: 10,
+                  centerHorizontally: true,
+                  centerVertically: true,
+                  children: [
+                    {
+                      type: 'text',
+                      font: '48px serif',
+                      fillStyle: 'black',
+                      text: gameSummary.name,
+                      onClick: () => {
+                        console.log('click on game text');
+                      }
+                    }
+                  ],
+                  onClick: () => {
+                    this.clickOnGame(gameSummary);
+                  },
+                }
+              );
+            }
+            break;
           case 'newGameResponse':
             this.current = Game.fromData(messageObject.game);
             this.state = 'inProgress';
@@ -102,37 +226,32 @@ class CanvasGame {
     });
   }
 
+  nextTurn() {
+    this.send({
+      type: 'endTurnRequest',
+      commands: this.commandsForServer,
+    });
+  }
+
   executeCommand(command) {
     switch (command.type) {
       case 'move':
         const unit = this.current.getUnitByPosition(command.unitPosition);
-        const tile = this.current.getTileByPosition(command.tilePosition);
-        const path = this.current.findShortestPath(unit, tile);
-        console.log(path);
+        const path = command.path.map(tilePosition => this.current.getTileByPosition(tilePosition));
         unit.movement = {
-          path,
+          path: path,
           currentStep: 0,
           state: 'begin',
         };
-        /*
-                      this.current.executeCommand(command);
-                      this.commandQueue.push(command);
-
-                      this.current.moveUnitToTile(unit, tile);
-        */
-        this.computeReachableTiles();
         break;
     }
   }
 
   computeReachableTiles() {
-    for (let x = 0; x < this.current.mapWidthInTiles; x++) {
-      for (let y = 0; y < this.current.mapHeightInTiles; y++) {
-        const tile = this.current.getTileByPosition({x, y});
-        tile.reachable = false;
-        delete tile.walkingDistance;
-      }
-    }
+    this.current.forEachTile((tile) => {
+      tile.reachable = false;
+      delete tile.walkingDistance;
+    });
     if (this.selectedUnitId != null) {
       const unit = this.current.getUnitById(this.selectedUnitId);
       const unitPosition = unit.position;
@@ -143,7 +262,7 @@ class CanvasGame {
       while (queue.length > 0) {
         const tile = queue.pop();
         const walkingDistance = tile.walkingDistance + 1;
-        if (walkingDistance > unitTypes[unit.type].move) {
+        if (walkingDistance > unit.move) {
           continue;
         }
         const minX = Math.max(tile.position.x - 1, 0);
@@ -215,6 +334,83 @@ class CanvasGame {
     'settler': '#f868b2',
     'warrior': '#ff0000',
   }
+
+  convertSizePercentage(size, parentComputedSize) {
+    if (size == null) {
+      return 0;
+    }
+    if (typeof size === 'number') {
+      return size;
+    } else {
+      const indexOfPercent = size.indexOf('%');
+      if (indexOfPercent !== -1) {
+        const percentString = size.substring(0, indexOfPercent);
+        const percent = Number.parseFloat(percentString) / 100;
+        return parentComputedSize * percent;
+      }
+    }
+  }
+
+  initNode(parent, element, index) {
+    element.parent = parent;
+    element.index = index;
+    if (element.font) {
+      this.context.font = element.font;
+    }
+    if (element.type === 'text') {
+      const size = this.context.measureText(element.text);
+      element.computedHeight = size.actualBoundingBoxAscent + size.actualBoundingBoxDescent;
+      element.computedWidth = size.width;
+    } else {
+      element.computedWidth = this.convertSizePercentage(element.width, parent.computedWidth);
+      element.computedHeight = this.convertSizePercentage(element.height, parent.computedHeight);
+    }
+    if (element.marginTop == null) {
+      element.marginTop = 0;
+    }
+
+    if (index === 0) {
+      element.y = parent.y + element.marginTop;
+    } else {
+      element.y = parent.children[index - 1].y + parent.children[index - 1].computedHeight + element.marginTop;
+    }
+    element.x = parent.x + (parent.computedWidth / 2) - (element.computedWidth / 2);
+
+    if (element.children != null) {
+      for (let i = 0; i < element.children.length; i++) {
+        const child = element.children[i];
+        this.initNode(element, child, i);
+      }
+    } else {
+      this.leafNodes.push(element);
+    }
+  }
+
+  renderNode(parent, element, index) {
+    if (element.font) {
+      this.context.font = element.font;
+    }
+    if (element.fillStyle) {
+      this.context.fillStyle = element.fillStyle;
+    }
+
+    if (element.backgroundColor) {
+      this.context.fillStyle = element.backgroundColor;
+      this.context.fillRect(element.x, element.y, element.computedWidth, element.computedHeight);
+    }
+    if (element.type === 'text') {
+      const y = element.y + element.computedHeight;
+      this.context.fillText(element.text, element.x, y);
+    }
+
+    if (element.children != null) {
+      for (let i = 0; i < element.children.length; i++) {
+        const child = element.children[i];
+        this.renderNode(element, child, i);
+      }
+    }
+  }
+
   tick() {
     // clear
     this.context.fillStyle = '#000000'
@@ -224,8 +420,16 @@ class CanvasGame {
       case 'loading':
         break;
       case 'menu':
-        this.context.fillStyle = 'red'
+        this.context.fillStyle = 'white';
         this.context.fillRect(0, 0, this.context.canvas.width, this.context.canvas.height)
+        this.renderNode({
+          width: this.canvas.width,
+          height: this.canvas.height,
+          computedWidth: this.canvas.width,
+          computedHeight: this.canvas.height,
+          y: 0,
+          x: 0,
+        }, this.menu, 0);
 
         break;
       case 'inProgress':
@@ -242,8 +446,8 @@ class CanvasGame {
             const yPos = y * this.tileHeight;
             this.context.fillRect(xPos, yPos, this.tileWidth, this.tileHeight);
             if (tile.reachable) {
-              this.context.fillStyle = 'black';
-              this.context.globalAlpha = 0.2;
+              this.context.fillStyle = 'green';
+              this.context.globalAlpha = 0.6;
               this.context.fillRect(xPos, yPos, this.tileWidth, this.tileHeight);
               this.context.globalAlpha = 1;
             }
@@ -252,7 +456,7 @@ class CanvasGame {
         }
 
         for (const unitId in this.current.units) {
-          const unit = this.current.units[unitId];
+          const unit = this.current.getUnitById(unitId);
           if (unit.movement) {
             const movement = unit.movement;
             const destination = movement.path[movement.currentStep];
@@ -293,13 +497,15 @@ class CanvasGame {
                 && unit.position.y === destination.position.y) {
                 movement.state = 'begin';
                 movement.currentStep++;
+                // noinspection JSConstantReassignment
+                unit.move--;
+
+                unit.position.x = destination.position.x;
+                unit.position.y = destination.position.y;
+                this.current.unitMap[unit.position.x][unit.position.y] = unit.id;
+                this.computeReachableTiles();
                 if (movement.path.length - 1 < movement.currentStep) {
                   unit.movement = null;
-
-                  unit.position.x = destination.position.x;
-                  unit.position.y = destination.position.y;
-                  this.current.unitMap[unit.position.x][unit.position.y] = unit.id;
-                  this.computeReachableTiles();
                 }
               }
             }
@@ -320,6 +526,15 @@ class CanvasGame {
       this.tick();
     }, msPerFrame);
   }
+
+  clickOnGame(gameSummary) {
+    console.log('click on online game button');
+  }
+
+  addNode(parent, node) {
+    parent.children.push(node);
+    this.initNode(parent, node, parent.children.length - 1);
+  }
 }
 
 
@@ -334,7 +549,7 @@ export function GamePage(props) {
   const canvasRef = useRef(null);
 
   return <div className="Game">
-    <canvas id="canvas" width="300" height="300" ref={canvasRef}>
+    <canvas id="canvas" width="600" height="600" ref={canvasRef}>
 
     </canvas>
   </div>
