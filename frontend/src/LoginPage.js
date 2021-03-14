@@ -18,7 +18,9 @@ export function LoginPage(props) {
       console.error(e);
       setError('Une erreur est survenue, veuillez réessayer ultérieurement.');
     }
-  }
+  };
+
+  submit();
 
   return (
     <div className="LoginForm">

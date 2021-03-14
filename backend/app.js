@@ -12,6 +12,7 @@ const cors = require('cors');
 const {
   Game,
   unitTypes,
+  ErrorResponse,
 } = require('4xgame_common');
 
 const indexRouter = require('./routes/index');
@@ -63,7 +64,7 @@ app.post('/login', function (req, res) {
 });
 
 app.delete('/logout', function (request, response) {
-  const ws = connectedUsers[request.session.userId];
+  const ws = connectedPlayers[request.session.userId];
 
   console.log('Destroying session');
   request.session.destroy(function () {
@@ -101,26 +102,54 @@ server.on('upgrade', function (request, socket, head) {
   });
 });
 
-const games = [];
-const connectedUsers = {};
+const games = {};
+const connectedPlayers = {};
 const sockets = {};
 
+function addPlayerToGame(game, player) {
+  game.players.push(player);
+  const startingTile = game.getRandomTile();
+  const startingSettler = game.newUnit('settler');
+  game.moveUnitToTile(startingSettler, startingTile);
+  game.addUnitToPlayer(startingSettler, player);
+  player.currentGameId = game.id;
+}
+
 wss.on('connection', function (ws, request) {
-  const send = (o) => {
+  const playerId = request.session.userId;
+
+  const player = {
+    id: playerId,
+    unitIds: [],
+    cityIds: [],
+    buildingIds: [],
+  };
+  connectedPlayers[playerId] = player;
+  sockets[playerId] = ws;
+  const send = (socket, o) => {
     ws.send(JSON.stringify(o));
   };
-  const userId = request.session.userId;
 
-  connectedUsers[userId] = {
-    id: userId,
-    units: [],
-    cities: [],
-    buildings: [],
-  };
-  sockets[userId] = ws;
+  const sendToOtherPlayers = (o) => {
+    const game = games[player.currentGameId];
+    for (const otherPlayer of game.players) {
+      if (otherPlayer.id === player.id) {
+        continue;
+      }
+      const socket = sockets[otherPlayer.id];
+      if (socket) {
+        socket.send(socket, {
+          type: 'otherPlayerTurnResponse',
+          playerId: player.id,
+          commands: messageObject.commands,
+        });
+      } else {
+        sockets[otherPlayer.id] = undefined;
+      }
+    }
+  }
 
   ws.on('message', function (message) {
-    const player = connectedUsers[userId];
     //
     // Here we can now use session parameters.
     //
@@ -128,38 +157,93 @@ wss.on('connection', function (ws, request) {
       const messageObject = JSON.parse(message);
       switch (messageObject.type) {
         case 'gameListRequest':
-          const gameSummaries = games.map(game => {
-            return {
-              name: game.id,
-              players: game.users.length,
-            };
-          });
-          send({
+          const gameSummaries = [];
+          for (const gameId in games) {
+            const game = games[gameId];
+            gameSummaries.push({
+              id: game.id,
+              players: game.players.length,
+            });
+          }
+          send(ws, {
             type: 'gameListResponse',
             gameSummaries,
           });
           break;
-        case 'newGameRequest':
+        case 'newGameRequest': {
           const game = Game.createWithRandomWorld();
-          game.users.push(player);
-          const startingTile = game.getRandomTile();
-          const startingSettler = game.newUnit('settler');
-          game.moveUnitToTile(startingSettler, startingTile);
-          game.addUnitToPlayer(startingSettler, player);
+          addPlayerToGame(game, player);
 
-          games.push(game);
-          send({
+          games[game.id] = game;
+          send(ws, {
             type: 'newGameResponse',
             game,
+            player,
           });
+        }
 
+          break;
+        case 'joinGameRequest': {
+          const gameId = messageObject.gameId;
+          const game = games[gameId];
+          if (game == null) {
+            send(ws, {
+              type: 'joinGameResponse',
+              error: ErrorResponse.gameDoesNotExist,
+            });
+            return;
+          }
+          addPlayerToGame(game, player);
+
+          send(ws, {
+            type: 'joinGameResponse',
+            game,
+            player,
+          });
+        }
+          break;
+        case 'readyRequest':
+          player.ready = true;
           break;
         case 'endTurnRequest':
           // TODO: input validation
+          // if input is invalid, ban the player
+          const game = games[player.currentGameId];
           for (const command of messageObject.commands) {
             switch (command.type) {
               case 'move':
+                const movingUnit = this.current.getUnitById(command.unitId);
+                const path = command.path.map(tileId => game.getTileById(tileId));
+                for (const tile of path) {
+                  if (movingUnit.move <= 0) {
+                    break;
+                  }
+                  if (tile.type === 'mountain') {
+                    continue;
+                  }
+                  game.moveUnitToTile(movingUnit, tile);
+                  movingUnit.move--;
+                }
                 break;
+            }
+          }
+          for (const unitId of player.unitIds) {
+            const unit = game.units[unitId];
+            unit.move = unitTypes[unit.type].move;
+          }
+          for (const otherPlayer of game.players) {
+            if (otherPlayer.id === player.id) {
+              continue;
+            }
+            const socket = sockets[otherPlayer.id];
+            if (socket) {
+              socket.send(socket, {
+                type: 'otherPlayerTurnResponse',
+                playerId: player.id,
+                commands: messageObject.commands,
+              });
+            } else {
+              delete sockets[otherPlayer.id];
             }
           }
           break;
@@ -171,7 +255,18 @@ wss.on('connection', function (ws, request) {
   });
 
   ws.on('close', function () {
-    delete connectedUsers[userId];
+    if (player.currentGameId != null) {
+      const game = games[player.currentGameId];
+      if (game != null) {
+        const playerIndex = game.players.findIndex(p => p === player);
+        game.players.splice(playerIndex, 1);
+        if (game.players.length == 0) {
+          delete games[player.currentGameId];
+        }
+      }
+      player.currentGameId = undefined;
+    }
+    delete connectedPlayers[playerId];
   });
 });
 

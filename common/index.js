@@ -26,6 +26,9 @@ function getRandomTileType() {
   return tileTypes[getRandomNumber(0, tileTypes.length)];
 }
 
+const ErrorResponse = {
+  gameDoesNotExist: "Game doesn't exist.",
+};
 
 const tileTypes = [
   'forest',
@@ -44,6 +47,7 @@ class Game {
   }
 
   static createWithRandomWorld() {
+    const tiles = {};
     const tileMap = [];
     const unitMap = [];
     for (let x = 0; x < 10; x++) {
@@ -58,14 +62,16 @@ class Game {
           building: null,
           id: uuid.v4(),
         };
-        tileMap[x][y] = tile;
+        tiles[tile.id] = tile;
+        tileMap[x][y] = tile.id;
         unitMap[x][y] = null;
       }
     }
 
     const game = Game.fromData({
       id: uuid.v4(),
-      users: [],
+      players: [],
+      tiles,
       tileMap,
       units: {},
       unitMap,
@@ -124,12 +130,16 @@ class Game {
     return this.getUnitById(unitId);
   }
 
+  getTileById(tileId) {
+    return this.tiles[tileId];
+  }
+
   getTileByPosition(tileCoord) {
-    return this.tileMap[tileCoord.x][tileCoord.y];
+    return this.getTileById(this.tileMap[tileCoord.x][tileCoord.y]);
   }
 
   addUnitToPlayer(unit, player) {
-    player.units.push(unit);
+    player.unitIds.push(unit.id);
     unit.owner = player.id;
   }
 
@@ -142,7 +152,7 @@ class Game {
 
   getRandomTile() {
     const position = this.getRandomTilePosition();
-    return this.tileMap[position.x][position.y];
+    return this.getTileByPosition(position);
   }
 
   findShortestPath(unit, toTile) {
@@ -150,11 +160,12 @@ class Game {
       return Math.hypot(toTile.position.x - n.position.x, toTile.position.y - n.position.y);
     }
 
-    this.forEachTile((tile) => {
+    for (const tileId in this.tiles) {
+      const tile = this.tiles[tileId];
       tile.fScore = undefined;
       tile.gScore = undefined;
       tile.from = undefined;
-    });
+    }
     const unitPosition = unit.position;
     const startingTile = this.getTileByPosition(unitPosition);
     startingTile.fScore = h(startingTile);
@@ -224,8 +235,8 @@ class Game {
   executeCommand(command) {
     switch (command.type) {
       case 'move':
-        const unit = this.getUnitByPosition(command.unitPosition);
-        const tile = this.getTileByPosition(command.tilePosition);
+        const unit = this.getUnitById(command.unitId);
+        const tile = this.getTileById(command.tileId);
         if (unit == null || tile == null) {
           return;
         }
@@ -237,21 +248,14 @@ class Game {
   createMoveCommand(unit, path) {
     return {
       type: 'move',
-      unitPosition: unit.position,
-      path: path.map(tile => tile.position),
+      unitId: unit.id,
+      path: path.map(tile => tile.id),
     };
-  }
-
-  forEachTile(f) {
-    for (let x = 0; x < this.mapWidthInTiles; x++) {
-      for (let y = 0; y < this.mapHeightInTiles; y++) {
-        f(this.getTileByPosition({x, y}));
-      }
-    }
   }
 }
 
 module.exports = {
   unitTypes,
   Game,
+  ErrorResponse,
 };
